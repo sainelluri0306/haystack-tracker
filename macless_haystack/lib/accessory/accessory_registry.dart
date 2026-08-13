@@ -1,7 +1,9 @@
 import 'dart:collection';
 import 'dart:convert';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import 'package:http/http.dart' as http;
 import 'package:logger/logger.dart';
 import 'package:macless_haystack/accessory/accessory_model.dart';
 import 'package:latlong2/latlong.dart';
@@ -18,6 +20,7 @@ class AccessoryRegistry extends ChangeNotifier {
   List<Accessory> _accessories = [];
   bool loading = false;
   bool initialLoadFinished = false;
+  bool usingPublishedFeed = false;
 
   var logger = Logger(
     printer: PrettyPrinter(methodCount: 0),
@@ -43,7 +46,7 @@ class AccessoryRegistry extends ChangeNotifier {
     } catch (e) {
       serialized = null;
     }
-    
+
     if (serialized != null) {
       List accessoryJson = json.decode(serialized);
       List<Accessory> loadedAccessories =
@@ -78,6 +81,54 @@ class AccessoryRegistry extends ChangeNotifier {
         }
       }
     }
+  }
+
+  /// Loads already-decrypted coordinates published by the home laptop.
+  ///
+  /// The phone UI never receives private keys. Refresh only re-reads
+  /// `/locations.json` from the same Vercel site.
+  Future<int> loadPublishedLocations() async {
+    if (!kIsWeb) {
+      throw Exception('Published locations are only used by the web UI.');
+    }
+    final uri = Uri.parse(
+        '${Uri.base.origin}/locations.json?t=${DateTime.now().millisecondsSinceEpoch}');
+    final response = await http.get(uri);
+    if (response.statusCode != 200) {
+      throw Exception('Published locations are not available yet.');
+    }
+    final decoded = jsonDecode(response.body) as Map<String, dynamic>;
+    final trackers = decoded['trackers'] as List<dynamic>? ?? [];
+    _accessories = trackers.map((raw) {
+      final tracker = raw as Map<String, dynamic>;
+      final latitude = tracker['latitude'];
+      final longitude = tracker['longitude'];
+      DateTime? timestamp;
+      if (tracker['timestamp'] is String) {
+        timestamp = DateTime.tryParse(tracker['timestamp'] as String);
+      }
+      return Accessory(
+        id: '${tracker['id']}',
+        name: '${tracker['name'] ?? 'Tracker'}',
+        hashedPublicKey: 'published:${tracker['id']}',
+        datePublished: timestamp,
+        lastLocation: latitude != null && longitude != null
+            ? LatLng(
+                (latitude as num).toDouble(), (longitude as num).toDouble())
+            : null,
+        icon: '${tracker['icon'] ?? 'mappin'}',
+        additionalKeys: const [],
+        hashesWithTS: <String, dynamic>{},
+        lastBatteryStatus: null,
+        locationHistory: [],
+      );
+    }).toList();
+    usingPublishedFeed = true;
+    initialLoadFinished = true;
+    notifyListeners();
+    return _accessories
+        .where((accessory) => accessory.lastLocation != null)
+        .length;
   }
 
   /// Fetches new location reports and matches them to their accessory.
@@ -119,7 +170,8 @@ class AccessoryRegistry extends ChangeNotifier {
       if (reports.where((element) => !element.isEncrypted()).isNotEmpty) {
         var lastReport =
             reports.where((element) => !element.isEncrypted()).first;
-        var reportDate = lastReport.timestamp ?? DateTime.fromMicrosecondsSinceEpoch(0);
+        var reportDate =
+            lastReport.timestamp ?? DateTime.fromMicrosecondsSinceEpoch(0);
         if (accessory.datePublished != null &&
             reportDate.isAfter(accessory.datePublished!)) {
           accessory.datePublished = reportDate;
@@ -244,8 +296,7 @@ class AccessoryRegistry extends ChangeNotifier {
     if (decryptedReports.isNotEmpty) {
       var lastReport = decryptedReports[decryptedReports.length - 1];
       var oldTs = accessory.datePublished;
-      var latestReportTS =
-          lastReport.timestamp ??  DateTime(1971);
+      var latestReportTS = lastReport.timestamp ?? DateTime(1971);
 
       if (oldTs == null || oldTs.isBefore(latestReportTS)) {
         //only an actualization if oldTS is not set or is older than the latest of the new ones

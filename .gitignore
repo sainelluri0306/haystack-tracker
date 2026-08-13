@@ -128,6 +128,9 @@ notes
 firmware/nrf5x/_build
 firmware/nrf5x/compiled
 endpoint/data/*.json
+haystack-secrets/
+**/_devices.json
+home-server/.venv/
 endpoint/venv/*
 *.iml
 .idea

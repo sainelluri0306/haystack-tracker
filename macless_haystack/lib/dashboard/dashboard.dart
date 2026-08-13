@@ -81,6 +81,28 @@ class _DashboardState extends State<Dashboard> {
   Future<void> loadLocationUpdates(Accessory? accessory) async {
     var accessoryRegistry =
         Provider.of<AccessoryRegistry>(context, listen: false);
+    try {
+      final publishedCount = await accessoryRegistry.loadPublishedLocations();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            backgroundColor: Theme.of(context).colorScheme.primary,
+            content: Text(
+              publishedCount > 0
+                  ? 'Updated $publishedCount tracker location(s) from the home laptop.'
+                  : 'No location report has been published yet.',
+              style: TextStyle(
+                color: Theme.of(context).colorScheme.onPrimary,
+              ),
+            ),
+          ),
+        );
+      }
+      return;
+    } catch (e) {
+      logger.i('Published locations unavailable, using local key import.',
+          error: e);
+    }
     var inactive = 0;
     Iterable<Accessory> accessories;
     if (accessory == null) {
