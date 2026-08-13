@@ -26,7 +26,7 @@ class MyApp extends StatelessWidget {
         ChangeNotifierProvider(create: (ctx) => LocationModel()),
       ],
       child: MaterialApp(
-        title: 'Macless Haystack',
+        title: 'My Trackers',
         theme: ThemeData(primarySwatch: Colors.blue),
         darkTheme: ThemeData.dark(),
         home: const AppLayout(),

@@ -1,4 +1,3 @@
-
 import 'package:flutter/material.dart';
 import 'package:flutter_settings_screens/flutter_settings_screens.dart';
 import 'package:logger/logger.dart';
@@ -32,7 +31,7 @@ class _DashboardState extends State<Dashboard> {
   /// A list of the tabs displayed in the bottom tab bar.
   late final List<Map<String, dynamic>> _tabs = [
     {
-      'title': 'My Accessories',
+      'title': 'My Trackers',
       'body': (ctx) => AccessoryMapListVertical(
             loadLocationUpdates: loadLocationUpdates,
             saveOrderUpdatesCallback: saveAccessories,
@@ -46,10 +45,10 @@ class _DashboardState extends State<Dashboard> {
           ),
     },
     {
-      'title': 'My Accessories',
+      'title': 'My Trackers',
       'body': (ctx) => const KeyManagement(),
       'icon': Icons.style,
-      'label': 'Accessories',
+      'label': 'Trackers',
       'actionButton': (ctx) => const NewKeyAction(),
     },
   ];
@@ -138,7 +137,7 @@ class _DashboardState extends State<Dashboard> {
   Widget build(BuildContext context) {
     return Scaffold(
         appBar: AppBar(
-          title: const Text('My Accessories'),
+          title: const Text('My Trackers'),
           actions: <Widget>[
             IconButton(
               onPressed: () {
