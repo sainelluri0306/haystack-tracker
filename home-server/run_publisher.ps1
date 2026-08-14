@@ -8,4 +8,4 @@ if (-not (Test-Path $devices)) {
 
 $python = "C:\Users\siddh\AppData\Local\Python\pythoncore-3.14-64\python.exe"
 & $python -m pip install --quiet cryptography requests
-& $python "$PSScriptRoot\publish_locations.py" --devices $devices --interval 600
+& $python "$PSScriptRoot\publish_locations.py" --devices $devices --interval 60

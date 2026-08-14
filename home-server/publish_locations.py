@@ -137,6 +137,11 @@ def latest_location(device: dict, reports: list[dict]) -> dict | None:
     return best
 
 
+_last_trackers = None
+_hashed_ids = None
+_did_full_history_fetch = False
+
+
 def write_locations(path: Path, trackers: list[dict]) -> None:
     payload = {
         "updatedAt": datetime.now(timezone.utc).isoformat(),
@@ -144,6 +149,27 @@ def write_locations(path: Path, trackers: list[dict]) -> None:
     }
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+
+
+def trackers_changed(trackers: list[dict]) -> bool:
+    global _last_trackers
+    return trackers != _last_trackers
+
+
+_last_fetch = 0.0
+NORMAL_SECONDS = 600
+LOST_SECONDS = 60
+
+
+def lost_mode_active(url: str) -> bool:
+    if not url:
+        return False
+    try:
+        response = requests.get(url, timeout=10)
+        response.raise_for_status()
+        return bool(response.json().get("lost"))
+    except Exception:
+        return False
 
 
 def git_publish(repo: Path, locations_file: Path) -> None:
@@ -174,13 +200,17 @@ def git_publish(repo: Path, locations_file: Path) -> None:
 
 
 def publish_once(args: argparse.Namespace) -> int:
+    global _last_trackers, _hashed_ids, _did_full_history_fetch
     devices = load_devices(Path(args.devices))
-    hashed_ids: list[str] = []
-    for device in devices:
-        hashed_ids.extend(advertisement_hash(key) for key in collect_keys(device))
-    hashed_ids = list(dict.fromkeys(hashed_ids))
-    print(f"Asking local Haystack endpoint for {len(hashed_ids)} key(s).")
-    reports = fetch_reports(args.endpoint, hashed_ids, args.days)
+    if _hashed_ids is None:
+        hashed_ids: list[str] = []
+        for device in devices:
+            hashed_ids.extend(advertisement_hash(key) for key in collect_keys(device))
+        _hashed_ids = list(dict.fromkeys(hashed_ids))
+    days = args.days if not _did_full_history_fetch else min(args.days, 1)
+    print(f"Asking local Haystack endpoint for {len(_hashed_ids)} key(s), {days} day(s).")
+    reports = fetch_reports(args.endpoint, _hashed_ids, days)
+    _did_full_history_fetch = True
     print(f"Received {len(reports)} encrypted report(s).")
 
     trackers = []
@@ -198,8 +228,13 @@ def publish_once(args: argparse.Namespace) -> int:
             print(f"{tracker['name']}: no location report yet")
         trackers.append(tracker)
 
+    if not trackers_changed(trackers):
+        print("Location unchanged, skipping Vercel publish.")
+        return 0
+
     locations_path = Path(args.output)
     write_locations(locations_path, trackers)
+    _last_trackers = trackers
     if args.repo:
         git_publish(Path(args.repo), locations_path)
     return 0
@@ -231,24 +266,41 @@ def parse_args() -> argparse.Namespace:
         help="Write locations.json without pushing to GitHub.",
     )
     parser.add_argument("--interval", type=int, default=0, help="Repeat every N seconds.")
+    parser.add_argument(
+        "--lost-url",
+        default="https://saiairtag.vercel.app/api/lost",
+        help="Vercel URL the Lost button sets. Empty string disables lost-mode checks.",
+    )
     return parser.parse_args()
 
 
 def main() -> int:
+    global _last_fetch
     args = parse_args()
     if args.skip_git:
         args.repo = None
-    while True:
+    if args.interval <= 0:
         try:
-            publish_once(args)
+            return publish_once(args)
         except Exception as exc:
             print(f"Publish failed: {exc}", file=sys.stderr)
-            if args.interval <= 0:
-                return 1
-        if args.interval <= 0:
-            return 0
-        print(f"Sleeping {args.interval} seconds.")
-        time.sleep(args.interval)
+            return 1
+    while True:
+        try:
+            lost = lost_mode_active(args.lost_url)
+            due = LOST_SECONDS if lost else NORMAL_SECONDS
+            now = time.time()
+            if _last_fetch == 0 or now - _last_fetch >= due:
+                if lost:
+                    print("Lost mode on: fetching reports every minute.")
+                publish_once(args)
+                _last_fetch = now
+            else:
+                remaining = int(due - (now - _last_fetch))
+                print(f"Waiting {remaining}s until next fetch (lost={lost}).")
+        except Exception as exc:
+            print(f"Publish failed: {exc}", file=sys.stderr)
+        time.sleep(60)
 
 
 if __name__ == "__main__":
