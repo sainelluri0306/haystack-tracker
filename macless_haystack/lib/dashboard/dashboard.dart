@@ -1,8 +1,5 @@
-import 'dart:async';
-import 'dart:convert';
-
 import 'package:flutter/material.dart';
-import 'package:http/http.dart' as http;
+import 'package:flutter_settings_screens/flutter_settings_screens.dart';
 import 'package:logger/logger.dart';
 import 'package:macless_haystack/item_management/refresh_action.dart';
 import 'package:provider/provider.dart';
@@ -31,9 +28,6 @@ class Dashboard extends StatefulWidget {
 }
 
 class _DashboardState extends State<Dashboard> {
-  bool _lostMode = false;
-  Timer? _lostTimer;
-
   /// A list of the tabs displayed in the bottom tab bar.
   late final List<Map<String, dynamic>> _tabs = [
     {
@@ -72,119 +66,21 @@ class _DashboardState extends State<Dashboard> {
     if (!locationPreferenceKnown || locationAccessWanted) {
       locationModel.requestLocationUpdates();
     }
-    // Always look for a published report when the site is opened or reloaded.
-    WidgetsBinding.instance.addPostFrameCallback((_) {
+    // Load new location reports on app start
+    if (Settings.getValue<bool>(fetchLocationOnStartupKey,
+        defaultValue: true)!) {
       loadLocationUpdates(null);
-    });
-  }
-
-  @override
-  void dispose() {
-    _lostTimer?.cancel();
-    super.dispose();
+    }
   }
 
   var logger = Logger(
     printer: PrettyPrinter(),
   );
 
-  Future<void> _setLostMode(bool enabled) async {
-    try {
-      await http.post(
-        Uri.parse('${Uri.base.origin}/api/lost'),
-        headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({'lost': enabled}),
-      );
-    } catch (e) {
-      logger.i('Could not signal lost mode to the home laptop.', error: e);
-    }
-  }
-
-  void _toggleLostMode() {
-    setState(() {
-      _lostMode = !_lostMode;
-    });
-    _lostTimer?.cancel();
-    _setLostMode(_lostMode);
-    if (_lostMode) {
-      _lostTimer = Timer.periodic(const Duration(minutes: 1), (_) {
-        loadLocationUpdates(null, silent: true);
-      });
-      loadLocationUpdates(null);
-    }
-  }
-
-  void _showPingPlaceholder() {
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text(
-          'Ping will control the ESP32 later. Nothing is sent from the browser yet.',
-        ),
-      ),
-    );
-  }
-
-  Widget _trackerActionBar() {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(12, 8, 12, 4),
-      child: Wrap(
-        spacing: 8,
-        runSpacing: 8,
-        children: [
-          FilledButton.tonalIcon(
-            onPressed: () => loadLocationUpdates(null),
-            icon: const Icon(Icons.refresh),
-            label: const Text('Refresh'),
-          ),
-          FilledButton.tonalIcon(
-            onPressed: _toggleLostMode,
-            icon:
-                Icon(_lostMode ? Icons.my_location : Icons.location_searching),
-            label: Text(_lostMode ? 'Lost: 1 min' : 'Lost'),
-            style: _lostMode
-                ? FilledButton.styleFrom(
-                    backgroundColor: Theme.of(context).colorScheme.error,
-                    foregroundColor: Theme.of(context).colorScheme.onError,
-                  )
-                : null,
-          ),
-          FilledButton.tonalIcon(
-            onPressed: _showPingPlaceholder,
-            icon: const Icon(Icons.volume_up_outlined),
-            label: const Text('Ping'),
-          ),
-        ],
-      ),
-    );
-  }
-
   /// Fetch location updates for all accessories.
-  Future<void> loadLocationUpdates(Accessory? accessory,
-      {bool silent = false}) async {
+  Future<void> loadLocationUpdates(Accessory? accessory) async {
     var accessoryRegistry =
         Provider.of<AccessoryRegistry>(context, listen: false);
-    try {
-      final publishedCount = await accessoryRegistry.loadPublishedLocations();
-      if (mounted && !silent) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            backgroundColor: Theme.of(context).colorScheme.primary,
-            content: Text(
-              publishedCount > 0
-                  ? 'Updated $publishedCount tracker location(s) from the home laptop.'
-                  : 'No location report has been published yet.',
-              style: TextStyle(
-                color: Theme.of(context).colorScheme.onPrimary,
-              ),
-            ),
-          ),
-        );
-      }
-      return;
-    } catch (e) {
-      logger.i('Published locations unavailable, using local key import.',
-          error: e);
-    }
     var inactive = 0;
     Iterable<Accessory> accessories;
     if (accessory == null) {
@@ -255,12 +151,7 @@ class _DashboardState extends State<Dashboard> {
             ),
           ],
         ),
-        body: Column(
-          children: [
-            if (_selectedIndex == 0) _trackerActionBar(),
-            Expanded(child: _tabs[_selectedIndex]['body'](context)),
-          ],
-        ),
+        body: _tabs[_selectedIndex]['body'](context),
         bottomNavigationBar: BottomNavigationBar(
           items: _tabs
               .map((tab) => BottomNavigationBarItem(
