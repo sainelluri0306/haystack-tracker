@@ -139,7 +139,44 @@ def latest_location(device: dict, reports: list[dict]) -> dict | None:
 
 _last_trackers = None
 _hashed_ids = None
-_did_full_history_fetch = False
+
+
+def load_previous_trackers(path: Path) -> dict[str, dict]:
+    global _last_trackers
+    sources: list[dict] = []
+    if _last_trackers:
+        sources.extend(_last_trackers)
+    if path.exists():
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+            sources.extend(payload.get("trackers") or [])
+        except Exception:
+            pass
+    previous = {}
+    for tracker in sources:
+        tracker_id = str(tracker.get("id", ""))
+        if tracker_id and "latitude" in tracker and "longitude" in tracker:
+            previous[tracker_id] = tracker
+            name = str(tracker.get("name", ""))
+            if name:
+                previous[name] = tracker
+    return previous
+
+
+def apply_last_known(tracker: dict, previous: dict[str, dict]) -> None:
+    prev = previous.get(str(tracker.get("id", ""))) or previous.get(
+        str(tracker.get("name", ""))
+    )
+    if not prev:
+        return
+    new_ts = tracker.get("timestamp") or ""
+    old_ts = prev.get("timestamp") or ""
+    if "latitude" not in tracker or "longitude" not in tracker or (
+        old_ts and new_ts and old_ts > new_ts
+    ):
+        for key in ("latitude", "longitude", "accuracy", "timestamp"):
+            if key in prev:
+                tracker[key] = prev[key]
 
 
 def write_locations(path: Path, trackers: list[dict]) -> None:
@@ -200,19 +237,20 @@ def git_publish(repo: Path, locations_file: Path) -> None:
 
 
 def publish_once(args: argparse.Namespace) -> int:
-    global _last_trackers, _hashed_ids, _did_full_history_fetch
+    global _last_trackers, _hashed_ids
     devices = load_devices(Path(args.devices))
     if _hashed_ids is None:
         hashed_ids: list[str] = []
         for device in devices:
             hashed_ids.extend(advertisement_hash(key) for key in collect_keys(device))
         _hashed_ids = list(dict.fromkeys(hashed_ids))
-    days = args.days if not _did_full_history_fetch else min(args.days, 1)
+    days = args.days
     print(f"Asking local Haystack endpoint for {len(_hashed_ids)} key(s), {days} day(s).")
     reports = fetch_reports(args.endpoint, _hashed_ids, days)
-    _did_full_history_fetch = True
     print(f"Received {len(reports)} encrypted report(s).")
 
+    locations_path = Path(args.output)
+    previous = load_previous_trackers(locations_path)
     trackers = []
     for device in devices:
         location = latest_location(device, reports)
@@ -223,7 +261,12 @@ def publish_once(args: argparse.Namespace) -> int:
         }
         if location:
             tracker.update(location)
-            print(f"{tracker['name']}: {location['latitude']:.5f}, {location['longitude']:.5f}")
+        apply_last_known(tracker, previous)
+        if "latitude" in tracker:
+            print(
+                f"{tracker['name']}: {tracker['latitude']:.5f}, {tracker['longitude']:.5f}"
+                + (" (last known)" if not location else "")
+            )
         else:
             print(f"{tracker['name']}: no location report yet")
         trackers.append(tracker)
@@ -232,7 +275,6 @@ def publish_once(args: argparse.Namespace) -> int:
         print("Location unchanged, skipping Vercel publish.")
         return 0
 
-    locations_path = Path(args.output)
     write_locations(locations_path, trackers)
     _last_trackers = trackers
     if args.repo:

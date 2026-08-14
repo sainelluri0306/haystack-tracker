@@ -97,25 +97,31 @@ class AccessoryRegistry extends ChangeNotifier {
     if (response.statusCode != 200) {
       throw Exception('Published locations are not available yet.');
     }
+    final previousById = {
+      for (final accessory in _accessories) accessory.id: accessory
+    };
     final decoded = jsonDecode(response.body) as Map<String, dynamic>;
     final trackers = decoded['trackers'] as List<dynamic>? ?? [];
     _accessories = trackers.map((raw) {
       final tracker = raw as Map<String, dynamic>;
+      final id = '${tracker['id']}';
+      final previous = previousById[id];
       final latitude = tracker['latitude'];
       final longitude = tracker['longitude'];
       DateTime? timestamp;
       if (tracker['timestamp'] is String) {
         timestamp = DateTime.tryParse(tracker['timestamp'] as String);
       }
+      timestamp ??= previous?.datePublished;
+      final LatLng? location = latitude != null && longitude != null
+          ? LatLng((latitude as num).toDouble(), (longitude as num).toDouble())
+          : previous?.lastLocation;
       return Accessory(
-        id: '${tracker['id']}',
-        name: '${tracker['name'] ?? 'Tracker'}',
-        hashedPublicKey: 'published:${tracker['id']}',
+        id: id,
+        name: '${tracker['name'] ?? previous?.name ?? 'Tracker'}',
+        hashedPublicKey: 'published:$id',
         datePublished: timestamp,
-        lastLocation: latitude != null && longitude != null
-            ? LatLng(
-                (latitude as num).toDouble(), (longitude as num).toDouble())
-            : null,
+        lastLocation: location,
         icon: '${tracker['icon'] ?? 'mappin'}',
         additionalKeys: const [],
         hashesWithTS: <String, dynamic>{},
